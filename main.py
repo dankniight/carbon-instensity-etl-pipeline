@@ -2,7 +2,7 @@ import requests
 import argparse
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -50,7 +50,6 @@ class CarbonIntensityETL:
         try:
             intensity_data = data.get('data', [{}])[0]
             return {
-                'timestamp': datetime.now().isoformat(),
                 'from_time': intensity_data.get('from', 'N/A'),
                 'to_time': intensity_data.get('to', 'N/A'),
                 'forecast': intensity_data.get('intensity', {}).get('forecast'),
@@ -73,7 +72,6 @@ class CarbonIntensityETL:
             mix_sorted = sorted(mix, key=lambda x: x['perc'], reverse=True)
 
             return {
-                'timestamp': datetime.now().isoformat(),
                 'from_time': generation_data.get('from', 'N/A'),
                 'to_time': generation_data.get('to', 'N/A'),
                 'generation_mix': json.dumps(mix_sorted)  # Store as JSON string
@@ -94,7 +92,6 @@ class CarbonIntensityETL:
             regions_sorted = sorted(regions_data, key=lambda x: x.get('intensity', {}).get('forecast', 0), reverse=True)
 
             return {
-                'timestamp': datetime.now().isoformat(),
                 'from_time': data.get('data', [{}])[0].get('from', 'N/A'),
                 'to_time': data.get('data', [{}])[0].get('to', 'N/A'),
                 'regions': regions_sorted[:10]  # Store top 10 regions as Python object
@@ -149,7 +146,6 @@ class CarbonIntensityETL:
         -- Carbon Intensity Table
         CREATE TABLE IF NOT EXISTS carbon_intensity (
             id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMPTZ NOT NULL,
             from_time TEXT,
             to_time TEXT,
             forecast INTEGER,
@@ -161,7 +157,6 @@ class CarbonIntensityETL:
         -- Generation Mix Table
         CREATE TABLE IF NOT EXISTS generation_mix (
             id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMPTZ NOT NULL,
             from_time TEXT,
             to_time TEXT,
             generation_mix JSONB,
@@ -171,7 +166,6 @@ class CarbonIntensityETL:
         -- Regional Intensity Table
         CREATE TABLE IF NOT EXISTS regional_intensity (
             id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMPTZ NOT NULL,
             from_time TEXT,
             to_time TEXT,
             regions JSONB,
@@ -206,7 +200,40 @@ class CarbonIntensityETL:
             print(f"\nUnexpected error in ETL pipeline: {e}")
 
     def run_cleanup_only(self):
-        pass
+        """Delete data older than 1 week from all tables"""
+        
+        # Calculate the cutoff date (1 week ago)
+        cutoff_date = datetime.now() - timedelta(days=7)
+        cutoff_iso = cutoff_date.isoformat()
+        
+        print(f"Cleaning up data older than {cutoff_date.strftime('%Y-%m-%d %H:%M:%S')}...")
+        
+        try:
+            # Clean up carbon_intensity table
+            result = self.supabase.table('carbon_intensity')\
+                .delete()\
+                .lt('created_at', cutoff_iso)\
+                .execute()
+            print(f"✓ Deleted {len(result.data) if result.data else 0} old records from carbon_intensity")
+            
+            # Clean up generation_mix table
+            result = self.supabase.table('generation_mix')\
+                .delete()\
+                .lt('created_at', cutoff_iso)\
+                .execute()
+            print(f"✓ Deleted {len(result.data) if result.data else 0} old records from generation_mix")
+            
+            # Clean up regional_intensity table
+            result = self.supabase.table('regional_intensity')\
+                .delete()\
+                .lt('created_at', cutoff_iso)\
+                .execute()
+            print(f"✓ Deleted {len(result.data) if result.data else 0} old records from regional_intensity")
+            
+            print("Cleanup process completed successfully.")
+            
+        except Exception as e:
+            print(f"Error during cleanup process: {e}")
 
 
 if __name__ == "__main__":
