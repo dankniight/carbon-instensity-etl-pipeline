@@ -1,13 +1,20 @@
 import requests
-import time
+import argparse
 import json
+import os
 from datetime import datetime
+from supabase import create_client, Client
+from dotenv import load_dotenv
 
+load_dotenv()
 
 class CarbonIntensityETL:
-    def __init__(self):
+    def __init__(self, supabase_url: str, supabase_key: str):
         self.base_url = "https://api.carbonintensity.org.uk"
         self.session = requests.Session()
+
+        # Initialize Supabase client
+        self.supabase: Client = create_client(supabase_url, supabase_key)
 
     def extract_intensity_data(self):
         try:
@@ -44,10 +51,10 @@ class CarbonIntensityETL:
             intensity_data = data.get('data', [{}])[0]
             return {
                 'timestamp': datetime.now().isoformat(),
-                'from': intensity_data.get('from', 'N/A'),
-                'to': intensity_data.get('to', 'N/A'),
-                'forecast': intensity_data.get('intensity', {}).get('forecast', 'N/A'),
-                'actual': intensity_data.get('intensity', {}).get('actual', 'N/A'),
+                'from_time': intensity_data.get('from', 'N/A'),
+                'to_time': intensity_data.get('to', 'N/A'),
+                'forecast': intensity_data.get('intensity', {}).get('forecast'),
+                'actual': intensity_data.get('intensity', {}).get('actual'),
                 'index': intensity_data.get('intensity', {}).get('index', 'N/A')
             }
         except Exception as e:
@@ -61,114 +68,164 @@ class CarbonIntensityETL:
         try:
             generation_data = data.get('data', {})
             mix = generation_data.get('generationmix', [])
-            
+
             # Sort by percentage (descending)
             mix_sorted = sorted(mix, key=lambda x: x['perc'], reverse=True)
-            
+
             return {
                 'timestamp': datetime.now().isoformat(),
-                'from': generation_data.get('from', 'N/A'),
-                'to': generation_data.get('to', 'N/A'),
-                'generation_mix': mix_sorted
+                'from_time': generation_data.get('from', 'N/A'),
+                'to_time': generation_data.get('to', 'N/A'),
+                'generation_mix': json.dumps(mix_sorted)  # Store as JSON string
             }
         except Exception as e:
             print(f"Error transforming generation data: {e}")
             return None
 
     def transform_regional_data(self, data):
-        """Transform regional data for display"""
+        """Transform regional data for storage"""
         if not data:
             return None
 
         try:
             regions_data = data.get('data', [{}])[0].get('regions', [])
-            
+
             # Sort by forecast intensity (descending)
             regions_sorted = sorted(regions_data, key=lambda x: x.get('intensity', {}).get('forecast', 0), reverse=True)
-            
+
             return {
                 'timestamp': datetime.now().isoformat(),
-                'from': data.get('data', [{}])[0].get('from', 'N/A'),
-                'to': data.get('data', [{}])[0].get('to', 'N/A'),
-                'regions': regions_sorted[:5]  # Top 5 regions by intensity
+                'from_time': data.get('data', [{}])[0].get('from', 'N/A'),
+                'to_time': data.get('data', [{}])[0].get('to', 'N/A'),
+                'regions': regions_sorted[:10]  # Store top 10 regions as Python object
             }
         except Exception as e:
             print(f"Error transforming regional data: {e}")
             return None
 
-    def load_and_print_intensity(self, data):
+    def load_intensity_data(self, data):
+        """Save intensity data to Supabase"""
         if not data:
-            return
+            return False
 
-        print("\n" + "="*60)
-        print("CARBON INTENSITY DATA")
-        print("="*60)
-        print(f"Timestamp: {data['timestamp']}")
-        print(f"Period: {data['from']} to {data['to']}")
-        print(f"Forecast Intensity: {data['forecast']} gCO2/kWh")
-        print(f"Actual Intensity: {data['actual']} gCO2/kWh")
-        print(f"Index: {data['index'].upper()}")
+        try:
+            result = self.supabase.table('carbon_intensity').insert(data).execute()
+            print(f"✓ Intensity data saved to Supabase - Forecast: {data['forecast']} gCO2/kWh")
+            return True
+        except Exception as e:
+            print(f"Error saving intensity data to Supabase: {e}")
+            return False
 
-    def load_and_print_generation(self, data):
+    def load_generation_data(self, data):
+        """Save generation mix data to Supabase"""
         if not data:
-            return
+            return False
 
-        print("\n" + "="*60)
-        print("GENERATION MIX DATA")
-        print("="*60)
-        print(f"Timestamp: {data['timestamp']}")
-        print(f"Period: {data['from']} to {data['to']}")
-        print("\nFuel Mix (sorted by contribution %):")
-        for fuel in data['generation_mix']:
-            print(f"  {fuel['fuel'].capitalize()}: {fuel['perc']:.1f}%")
+        try:
+            result = self.supabase.table('generation_mix').insert(data).execute()
+            print(f"✓ Generation mix data saved to Supabase")
+            return True
+        except Exception as e:
+            print(f"Error saving generation data to Supabase: {e}")
+            return False
 
-    def load_and_print_regional(self, data):
+    def load_regional_data(self, data):
+        """Save regional data to Supabase"""
         if not data:
-            return
+            return False
 
-        print("\n" + "="*60)
-        print("REGIONAL CARBON INTENSITY DATA (Top 5 Regions)")
-        print("="*60)
-        print(f"Timestamp: {data['timestamp']}")
-        print(f"Period: {data['from']} to {data['to']}")
-        print("\nRegions (sorted by forecast intensity):")
-        for region in data['regions']:
-            print(f"  {region['shortname']}: {region['intensity']['forecast']} gCO2/kWh ({region['intensity']['index']})")
+        try:
+            result = self.supabase.table('regional_intensity').insert(data).execute()
+            print(f"✓ Regional data saved to Supabase")
+            return True
+        except Exception as e:
+            print(f"Error saving regional data to Supabase: {e}")
+            return False
+
+    def create_tables_if_not_exist(self):
+        """Create tables in Supabase if they don't exist (requires SQL execution)"""
+        print("Note: Ensure the following tables exist in your Supabase database:")
+        print("""
+        -- Carbon Intensity Table
+        CREATE TABLE IF NOT EXISTS carbon_intensity (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ NOT NULL,
+            from_time TEXT,
+            to_time TEXT,
+            forecast INTEGER,
+            actual INTEGER,
+            index TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        -- Generation Mix Table
+        CREATE TABLE IF NOT EXISTS generation_mix (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ NOT NULL,
+            from_time TEXT,
+            to_time TEXT,
+            generation_mix JSONB,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        -- Regional Intensity Table
+        CREATE TABLE IF NOT EXISTS regional_intensity (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMPTZ NOT NULL,
+            from_time TEXT,
+            to_time TEXT,
+            regions JSONB,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        """)
 
     def run_etl_pipeline(self):
-        print("Starting Carbon Intensity ETL Pipeline...")
-        print("Press Ctrl+C to stop")
-        
-        try:
-            while True:
-                # Extract
-                intensity_raw = self.extract_intensity_data()
-                generation_raw = self.extract_generation_data()
-                regional_raw = self.extract_regional_data()
-                
-                # Transform
-                intensity_transformed = self.transform_intensity_data(intensity_raw)
-                generation_transformed = self.transform_generation_data(generation_raw)
-                regional_transformed = self.transform_regional_data(regional_raw)
-                
-                # Load
-                self.load_and_print_intensity(intensity_transformed)
-                self.load_and_print_generation(generation_transformed)
-                self.load_and_print_regional(regional_transformed)
+        print("Starting Carbon Intensity ETL Pipeline with Supabase...")
 
-                print("\n" + "-"*60)
-                print("Next update in 30 seconds...")
-                print("-"*60)
-                
-                # Wait before next update
-                time.sleep(30)
-                
-        except KeyboardInterrupt:
-            print("\n\nETL Pipeline stopped by user.")
+        self.create_tables_if_not_exist()
+
+        try:
+            print(f"\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Running ETL cycle...")
+
+            # Extract
+            intensity_raw = self.extract_intensity_data()
+            generation_raw = self.extract_generation_data()
+            regional_raw = self.extract_regional_data()
+
+            # Transform
+            intensity_transformed = self.transform_intensity_data(intensity_raw)
+            generation_transformed = self.transform_generation_data(generation_raw)
+            regional_transformed = self.transform_regional_data(regional_raw)
+
+            # Load to Supabase
+            intensity_saved = self.load_intensity_data(intensity_transformed)
+            generation_saved = self.load_generation_data(generation_transformed)
+            regional_saved = self.load_regional_data(regional_transformed)
+
         except Exception as e:
             print(f"\nUnexpected error in ETL pipeline: {e}")
 
+    def run_cleanup_only(self):
+        pass
+
 
 if __name__ == "__main__":
-    etl = CarbonIntensityETL()
-    etl.run_etl_pipeline()
+
+    parser = argparse.ArgumentParser(description='Carbon Intensity ETL Pipeline')
+    parser.add_argument('--cleanup-only', action='store_true',
+                        help='Run only the cleanup process (delete old data)')
+    args = parser.parse_args()
+
+    SUPABASE_URL = os.getenv('SUPABASE_URL')
+    SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("SUPABASE_URL and/or SUPABASE_SERVICE_KEY environment variables missing")
+        exit(1)
+
+    etl = CarbonIntensityETL(SUPABASE_URL, SUPABASE_KEY)
+
+    if args.cleanup_only:
+        etl.run_cleanup_only()
+    else:
+        etl.run_etl_pipeline()
