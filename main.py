@@ -74,7 +74,7 @@ class CarbonIntensityETL:
             return {
                 'from_time': generation_data.get('from', 'N/A'),
                 'to_time': generation_data.get('to', 'N/A'),
-                'generation_mix': json.dumps(mix_sorted)  # Store as JSON string
+                'generation_mix': mix_sorted  # Store as Python object (will be converted to JSONB by Supabase)
             }
         except Exception as e:
             print(f"Error transforming generation data: {e}")
