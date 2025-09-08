@@ -2,8 +2,8 @@ name: Carbon Intensity ETL
 
 on:
   schedule:
-    # Runs ETL every hour
-    - cron: "0 * * * *"
+    # Runs ETL every hour at 5 past the hour
+    - cron: "5 * * * *"
     # Runs cleanup daily at 02:00 UTC
     - cron: "0 2 * * *"
   workflow_dispatch:  # Allow manual trigger
