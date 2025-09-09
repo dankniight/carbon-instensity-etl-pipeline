@@ -1,4 +1,4 @@
-# Carbon Intensity ETL Pipeline
+# How Renewable Is My Energy? ETL Pipeline
 
 A Python-based ETL pipeline that fetches real-time carbon intensity data from the National Grid ESO API and stores it in a Supabase database, with a Streamlit dashboard for visualization.
 
