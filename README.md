@@ -32,6 +32,7 @@ The dashboard is viewable here: https://how-renewable-uk.streamlit.app/
 ## Automated Workflow
 
 The pipeline runs hourly via GitHub Actions, with daily cleanup of old data (to stay witin free hosting limits).
+In production, this would be replaced by something like Apache Airflow
 
 ## Project Structure
 
